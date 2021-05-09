@@ -1,0 +1,966 @@
+#!/bin/bash
+
+# Check preconditions: jq and SpxpCryptoTool on the path
+if ! command -v jq &> /dev/null
+then
+  echo "jq could not be found on path"
+  exit 1
+fi
+if ! command -v SpxpCryptoTool &> /dev/null
+then
+  echo "SpxpCryptoTool could not be found on path"
+  exit 1
+fi
+
+# ensure existance of ~/.spxp
+if [ ! -d ~/.spxp ]; then
+  mkdir ~/.spxp
+fi
+
+usage() {
+  echo "Usage: spxp <command> [options...] [parameters]"
+  echo "commands:"
+  echo "  help      Print this screen or additional help for a command"
+  echo "  init      Initialise a new identity and store it in the users home folder"
+  echo "  discover  Discover service URIs of domain supporting the SPXP service provider extension"
+  echo "  bind      Bind an initialised profile to a profile URI"
+  echo "  profile   Set profile properties"
+  echo "  post      Publish a new post"
+  echo "  friends   Maintain list of friends"
+  echo "For usage examples see 'spxp help'"
+}
+
+usage_help() {
+  echo "Usage: spxp help <command>"
+  echo "Prints help for a specific command"
+  echo "commands:"
+  echo "  help, init, discover, bind, profile, post, friends"
+  echo "Examples:"
+  echo "Run these commands in the given sequence"
+  echo "  spxp init --name \"John Doe\" --shortInfo \"My first SPXP profile\""
+  echo "  spxp discover spxp.space"
+  echo "    Append ?return_scheme=abcd to the startUri and open this URI in a browser. Follow instruction until"
+  echo "    the last page, then copy the link address of the \"Continue with profile setup\" link"
+  echo "  spxp bind spxp.space <token>"
+  echo "    Remove the 'abcd:' prefix from the link you copied from the browser to get the token"
+  echo "  spxp profile about \"People say nothing is impossible, but I do nothing every day.\""
+}
+
+usage_init() {
+  echo "Usage: spxp init [options...]"
+  echo "Initialise a new identity and store it in the users home folder"
+  echo "options:"
+  echo "  -i --identity   Internal identifier of the new identity. Not public visible. 'default' by default."
+  echo "  -n --name       Public visible name of the new identity. Required."
+  echo "  -s --shortInfo  Public visible short info of the new identity. Optional."
+}
+
+usage_discover() {
+  echo "Usage: spxp discover <domain>"
+  echo "Discover service URIs of domain supporting the SPXP service provider extension"
+  echo "parameters:"
+  echo "  <domain>  Domain name of SPXP service provider to discover."
+}
+
+usage_bind() {
+  echo "Usage: spxp bind [options..] <domain> <token>"
+  echo "Discover service URIs of domain supporting the SPXP service provider extension"
+  echo "options:"
+  echo "  -i --identity   Internal identifier of the new identity. Not public visible. 'default' by default."
+  echo "parameters:"
+  echo "  <domain>  Domain name of SPXP service provider to bind new identity to"
+  echo "  <token>   Token provided by SPXP service provider"
+}
+
+usage_profile() {
+  echo "Usage: spxp profile [options..] <name> <value>"
+  echo "Set a property of the profile and publish it. Only string properties are supported"
+  echo "options:"
+  echo "  -i --identity   Internal identifier of the new identity. Not public visible. 'default' by default."
+  echo "parameters:"
+  echo "  <name>   Name of profile property to set. One of \"name\", \"shortInfo\", \"about\", \"gender\", \"website\","
+  echo "           \"email\", \"birthDayAndMonth\", \"birthYear\", \"profilePhoto\", \"hometown\", \"location\""
+  echo "  <value>  Value to set property to. Omit <value> to remove property. In case of \"profilePhoto\", path of local file."
+  echo "           A valid profile URI in case of \"hometown\" or \"location\"."
+}
+
+usage_post() {
+  echo "Usage: spxp post <type> [options...]"
+  echo "Publish a new post"
+  echo "parameter:"
+  echo "  <type>  One of \"text\", \"web\", \"photo\" or \"video\""
+  echo "options:"
+  echo "  -i --identity  Internal identifier of the new identity. Not public visible. 'default' by default."
+  echo "  -M --message   Message to appear in this post. Required for type \"text\""
+  echo "  -f --msgfile   Read content of message from file"
+  echo "  -l --link      Link to appear in this post. Required for type \"web\""
+  echo "  -p --preview   File name containing preview picture of \"photo\" or \"video\" post"
+  echo "  -f --full      File name containing full media of \"photo\" or \"video\" post"
+  echo "  -a --place     Profile URI of a place"
+  echo "  -c --createts  Optional create timestamp in spxp format"
+}
+
+usage_friends() {
+  echo "Usage: spxp friends <command> <profileuri> [options...]"
+  echo "Maintain list of friends"
+  echo "commands:"
+  echo "  add     Add given profileuri to list of friends"
+  echo "  remove  Remove given profileuri from list of friends"
+  echo "options:"
+  echo "  -i --identity  Internal identifier of the new identity. Not public visible. 'default' by default."
+}
+
+help () {
+if [ "$1" = "help" ] ; then
+  usage_help
+elif [ "$1" = "init" ] ; then
+  usage_init
+elif [ "$1" = "discover" ]; then
+  usage_discover
+elif [ "$1" = "bind" ]; then
+  usage_bind
+elif [ "$1" = "profile" ]; then
+  usage_profile
+elif [ "$1" = "post" ]; then
+  usage_post
+elif [ "$1" = "friends" ]; then
+  usage_friends
+else
+  usage_help
+  exit 1
+fi
+}
+
+init() {
+  identity="default"
+  name=""
+  shortInfo=""
+  while (( "$#" )); do
+    case "$1" in
+      -i|--identity)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          identity=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing. Use 'spxp help init' for more details." >&2
+          exit 1
+        fi
+        ;;
+      -n|--name)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          name=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing. Use 'spxp help init' for more details." >&2
+          exit 1
+        fi
+        ;;
+      -s|--shortInfo)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          shortInfo=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing. Use 'spxp help init' for more details." >&2
+          exit 1
+        fi
+        ;;
+      -*|--*=) # unsupported flags
+        echo "Error: Unsupported flag $1. Use 'spxp help init' for more details." >&2
+        exit 1
+        ;;
+      *) # preserve positional arguments
+        echo "Error: Unsupported parameter $1. Use 'spxp help init' for more details." >&2
+        exit 1
+        ;;
+    esac
+  done
+  # check we have a name
+  if [ -z "$name" ]; then
+    echo "Missing name of new profile. Use 'spxp help init' for more details." >&2
+    exit 1
+  fi
+  # check that this identity has not yet been initialised
+  if [ -d ~/.spxp/$identity ]; then
+    echo "Error: Identity seems to be already initialised. Directory '~/.spxp/$identity' exists." >&2
+    exit 1
+  else
+    mkdir ~/.spxp/$identity
+  fi
+  # Create keypairs
+  SpxpCryptoTool genprofilekeypair > ~/.spxp/$identity/signing-keypair.json
+  SpxpCryptoTool extractprofilepublic ~/.spxp/$identity/signing-keypair.json > ~/.spxp/$identity/profile-public-key.json
+  SpxpCryptoTool genconnectkeypair > ~/.spxp/$identity/connection-keypair.json
+  # Generate initial profile
+  jq --null-input --arg nameStr "$name" --arg shortInfoStr "$shortInfo" --slurpfile profilePublicKey ~/.spxp/$identity/profile-public-key.json '{"ver": "0.3", "name": $nameStr, "shortInfo": $shortInfoStr, "publicKey": $profilePublicKey[0]}' > ~/.spxp/$identity/profile.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Generating profile file failed." >&2
+    exit 1
+  fi
+  # Generate initial friends
+  jq --null-input '{"data":[]}' > ~/.spxp/$identity/friends.json
+  # Report succeess
+  echo "New identity '$identity' successfully initialised using name '$name'"
+}
+
+discover() {
+  domain=$1
+  # check we have a domain
+  if [ -z "$domain" ]; then
+    echo "Missing domain of service provider. Use 'spxp help discover' for more details." >&2
+    exit 1
+  fi
+  speDiscoveryUri="https://$domain/.well-known/spxp/spe-discovery"
+  speDiscoveryResponse=$(curl -f -s -H "Accept: application/json" "$speDiscoveryUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Discovery failed. $domain does not provide the SPXP-SPE extension." >&2
+    exit 1
+  fi
+  startUri=$(echo $speDiscoveryResponse | jq -r .start)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Discovery failed. $domain does not provide the SPXP-SPE extension." >&2
+    exit 1
+  fi
+  bindUri=$(echo $speDiscoveryResponse | jq -r .bind)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Discovery failed. $domain does not provide the SPXP-SPE extension." >&2
+    exit 1
+  fi
+  managementEndpoint=$(echo $speDiscoveryResponse | jq -r .managementEndpoint)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Discovery failed. $domain does not provide the SPXP-SPE extension." >&2
+    exit 1
+  fi
+  echo "Start: $startUri"
+  echo "Bind: $bindUri"
+  echo "ManagementEndpoint: $managementEndpoint"
+}
+
+sign_profile() {
+  rm -f ~/.spxp/$identity/profile-temp.json
+  jq 'del(.signature)' ~/.spxp/$identity/profile.json | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json > ~/.spxp/$identity/profile-temp.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Updating profile file failed." >&2
+    rm -f ~/.spxp/$identity/profile-temp.json
+    exit 1
+  fi
+  rm ~/.spxp/$identity/profile.json
+  mv ~/.spxp/$identity/profile-temp.json ~/.spxp/$identity/profile.json
+}
+
+sign_friends() {
+  rm -f ~/.spxp/$identity/friends-temp.json
+  jq 'del(.signature)' ~/.spxp/$identity/friends.json | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json > ~/.spxp/$identity/friends-temp.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Updating friends file failed." >&2
+    rm -f ~/.spxp/$identity/friends-temp.json
+    exit 1
+  fi
+  rm ~/.spxp/$identity/friends.json
+  mv ~/.spxp/$identity/friends-temp.json ~/.spxp/$identity/friends.json
+}
+
+get_access_token() {
+  if [ ! -z "$accessToken" ]; then
+    return
+  fi
+  local deviceToken=$(jq -r .deviceToken ~/.spxp/$identity/binding.json)
+  local timestamp=$(date -u +%Y-%m-%dT%T.000)
+  local accessTokenData=$(jq --null-input --compact-output --arg deviceToken "$deviceToken" --arg timestamp "$timestamp" '{"device_token": $deviceToken, "timestamp": $timestamp}')
+  local managementEndpoint=$(jq -r .managementEndpoint ~/.spxp/$identity/binding.json)
+  local accessTokenUri="$managementEndpoint/auth/access_token"
+  local accessTokenResponse=$(echo $accessTokenData | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json | curl -f -s -H "Accept: application/json" -H "Content-Type:application/json" -d @- "$accessTokenUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot get access token. Server response: $accessTokenResponse" >&2
+    exit 1
+  fi
+  accessToken=$(echo $accessTokenResponse | jq -r .access_token)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot get access token. Server response: $accessTokenResponse" >&2
+    exit 1
+  fi
+}
+
+publish_profile() {
+  publish "root" "profile.json"
+}
+
+publish_friends() {
+  publish "friends" "friends.json"
+}
+
+publish() {
+  local apiEndpoint=$1
+  local fileName=$2
+  # Get access token
+  get_access_token
+  # Publish
+  local managementEndpoint=$(jq -r .managementEndpoint ~/.spxp/$identity/binding.json)
+  local publishRootUri="$managementEndpoint/profile/$apiEndpoint"
+  local publishRootResponse=$(curl -f -s -T ~/.spxp/$identity/$fileName -H "Accept: application/json" -H "Content-Type:application/json" -H "Authorization: Bearer $accessToken" "$publishRootUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot publish profile $apiEndpoint. Server response: $publishRootResponse" >&2
+    exit 1
+  fi
+}
+
+bind() {
+  identity="default"
+  positional=()
+  while (( "$#" )); do
+    case "$1" in
+      -i|--identity)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          identity=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -*|--*=) # unsupported flags
+        echo "Error: Unsupported flag $1" >&2
+        exit 1
+        ;;
+      *) # preserve positional arguments
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+  domain=${positional[0]}
+  token=${positional[1]}
+  # check we have a domain and token
+  if [ -z "$domain" ]; then
+    echo "Missing domain of service provider. Use 'spxp help bind' for more details." >&2
+    exit 1
+  fi
+  if [ -z "$token" ]; then
+    echo "Missing token for service provider. Use 'spxp help bind' for more details." >&2
+    exit 1
+  fi
+  # verify identity is not yet bound
+  if [ -f ~/.spxp/$identity/binding.json ]; then
+    echo "Error: Identity seems to be already bound. File '~/.spxp/$identity/binding.json' exists." >&2
+    exit 1
+  fi
+  # SPE Discovery
+  speDiscoveryUri="https://$domain/.well-known/spxp/spe-discovery"
+  speDiscoveryResponse=$(curl -f -s -H "Accept: application/json" "$speDiscoveryUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Discovery failed. $domain does not provide the SPXP-SPE extension" >&2
+    exit 1
+  fi
+  bindUri=$(echo $speDiscoveryResponse | jq -r .bind)
+  managementEndpoint=$(echo $speDiscoveryResponse | jq -r .managementEndpoint)
+  # SPE Binding
+  bindData=$(jq --null-input --compact-output --arg tokenStr "$token" --slurpfile profilePublicKey ~/.spxp/$identity/profile-public-key.json '{"token": $tokenStr, "publicKey": $profilePublicKey[0]}')
+  speBindResponse=$(curl -f -s -H "Accept: application/json" -H "Content-Type:application/json" -d "$bindData" "$bindUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Bind failed. Server response: $speBindResponse" >&2
+    exit 1
+  fi
+  profileUri=$(echo $speBindResponse | jq -r .profileUri)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Bind failed. Server response: $speBindResponse" >&2
+    exit 1
+  fi
+  jq --null-input --arg profileUri "$profileUri" --arg managementEndpoint "$managementEndpoint" '{"profileUri": $profileUri, "managementEndpoint": $managementEndpoint}' > ~/.spxp/$identity/binding.json
+  # Device registration
+  deviceId="spxp-cli"
+  timestamp=$(date -u +%Y-%m-%dT%T.000)
+  deviceRegistrationData=$(jq --null-input --compact-output --arg profileUri "$profileUri" --arg deviceId "$deviceId" --arg timestamp "$timestamp" '{"profile_uri": $profileUri, "device_id": $deviceId, "timestamp": $timestamp}')
+  deviceRegistrationUri="$managementEndpoint/auth/device"
+  deviceRegistrationResponse=$(echo $deviceRegistrationData | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json | curl -f -s -H "Accept: application/json" -H "Content-Type:application/json" -d @- "$deviceRegistrationUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Device registration failed. Server response: $deviceRegistrationResponse" >&2
+    exit 1
+  fi
+  deviceToken=$(echo $deviceRegistrationResponse | jq -r .device_token)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Device registration failed. Server response: $deviceRegistrationResponse" >&2
+    exit 1
+  fi
+  rm -f ~/.spxp/$identity/binding-temp.json
+  jq --arg deviceToken $deviceToken '. + {"deviceToken": $deviceToken}' ~/.spxp/$identity/binding.json > ~/.spxp/$identity/binding-temp.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Updating binding file failed." >&2
+    rm -f ~/.spxp/$identity/binding-temp.json
+    exit 1
+  fi
+  rm ~/.spxp/$identity/binding.json
+  mv ~/.spxp/$identity/binding-temp.json ~/.spxp/$identity/binding.json
+  # Get access token
+  get_access_token
+  # Get service info
+  serviceInfoUri="$managementEndpoint/service/info"
+  serviceInfoResponse=$(curl -f -s -H "Accept: application/json" -H "Content-Type:application/json" -H "Authorization: Bearer $accessToken" "$serviceInfoUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    exit 1
+  fi
+  friendsEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.friendsEndpoint)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    exit 1
+  fi
+  postsEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.postsEndpoint)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    exit 1
+  fi
+  keysEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.keysEndpoint)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    exit 1
+  fi
+  connectEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.connectEndpoint)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    exit 1
+  fi
+  connectResponseEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.connectResponseEndpoint)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    exit 1
+  fi
+  # Update binding file with service endpoints
+  rm -f ~/.spxp/$identity/binding-temp.json
+  jq --arg friendsEndpoint "$friendsEndpoint" \
+     --arg postsEndpoint "$postsEndpoint" \
+     --arg keysEndpoint "$keysEndpoint" \
+     --arg connectEndpoint "$connectEndpoint" \
+     --arg connectResponseEndpoint "$connectResponseEndpoint" \
+     '. + {"friendsEndpoint": $friendsEndpoint, "postsEndpoint": $postsEndpoint, "keysEndpoint": $keysEndpoint, "connectEndpoint": $connectEndpoint, "connectResponseEndpoint": $connectResponseEndpoint}' \
+     ~/.spxp/$identity/binding.json > ~/.spxp/$identity/binding-temp.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Updating binding file failed." >&2
+    rm -f ~/.spxp/$identity/binding-temp.json
+    exit 1
+  fi
+  rm ~/.spxp/$identity/binding.json
+  mv ~/.spxp/$identity/binding-temp.json ~/.spxp/$identity/binding.json
+  # Update profile with service endpoints
+  rm -f ~/.spxp/$identity/profile-temp.json
+  jq --arg friendsEndpoint "$friendsEndpoint" \
+     --arg postsEndpoint "$postsEndpoint" \
+     --arg keysEndpoint "$keysEndpoint" \
+     '. + {"friendsEndpoint": $friendsEndpoint, "postsEndpoint": $postsEndpoint, "keysEndpoint": $keysEndpoint}' \
+     ~/.spxp/$identity/profile.json > ~/.spxp/$identity/profile-temp.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Updating profile file failed." >&2
+    rm -f ~/.spxp/$identity/profile-temp.json
+    exit 1
+  fi
+  rm ~/.spxp/$identity/profile.json
+  mv ~/.spxp/$identity/profile-temp.json ~/.spxp/$identity/profile.json
+  # Sign profile and friends
+  sign_profile
+  sign_friends
+  # Publish
+  publish_profile
+  publish_friends
+  # Report succeess
+  echo "Successfully bound identity '$identity' to '$profileUri'. To validate, use:"
+  echo "curl $profileUri"
+}
+
+profile() {
+  identity="default"
+  positional=()
+  while (( "$#" )); do
+    case "$1" in
+      -i|--identity)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          identity=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -*|--*=) # unsupported flags
+        echo "Error: Unsupported flag $1" >&2
+        exit 1
+        ;;
+      *) # preserve positional arguments
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+  propname=${positional[0]}
+  propvalue=${positional[1]}
+  # check we have a name and value
+  if [ -z "$propname" ]; then
+    echo "Missing property name. Use 'spxp help profile' for more details." >&2
+    exit 1
+  fi
+  # check for supported property
+  if ! [[ "$propname" =~ ^(name|shortInfo|about|gender|website|email|birthDayAndMonth|birthYear|profilePhoto|hometown|location)$ ]]; then
+    echo "Unsupported property. Use 'spxp help profile' for more details." >&2
+    exit 1
+  fi
+  # update profile
+  rm -f ~/.spxp/$identity/profile-temp.json
+  if [ -z "$propvalue" ]; then
+    # remove
+    jq "del(.$propname)" ~/.spxp/$identity/profile.json > ~/.spxp/$identity/profile-temp.json
+  else
+    # set
+    if [ "$propname" = "profilePhoto" ]; then
+      if [ ! -f "$propvalue" ]; then
+        echo "Resource for profilePhoto does not exist. File not found: $propvalue" >&2
+        exit 1
+      fi
+      if [ ! -f ~/.spxp/$identity/binding.json ]; then
+        echo "Cannot upload profile photo resource. Identity is not bound." >&2
+        exit 1
+      fi
+      get_access_token
+      managementEndpoint=$(jq -r .managementEndpoint ~/.spxp/$identity/binding.json)
+      publishMediaUri="$managementEndpoint/media"
+      publishMediaResponse=$(curl -s -H "Accept: application/json" -H "Authorization: Bearer $accessToken" -F source=@$propvalue "$publishMediaUri")
+      if [ ! "$?" -eq 0 ]; then
+        echo "Cannot publish post. Publishing media failed: $publishMediaResponse" >&2
+        exit 1
+      fi
+      propvalue=$(echo $publishMediaResponse | jq -r .uri)
+      jq --arg propvalue "$propvalue" ". + {\"$propname\": \$propvalue}" ~/.spxp/default/profile.json > ~/.spxp/$identity/profile-temp.json
+    elif [[ "$propname" =~ ^(hometown|location)$ ]]; then
+      refProfileResponse=$(curl -f -s -H "Accept: application/json" "$propvalue")
+      if [ ! "$?" -eq 0 ]; then
+        echo "Referenced profile does not exist. Server response: $refProfileResponse" >&2
+        exit 1
+      fi
+      echo $refProfileResponse | jq > /dev/null
+      if [ ! "$?" -eq 0 ]; then
+        echo "Referenced profile does not exist. Server response is not a valid JSON document." >&2
+        exit 1
+      fi
+      ver=$(echo $refProfileResponse | jq -e -r .ver)
+      if [ ! "$?" -eq 0 ]; then
+        echo "Referenced profile does not exist. Server response is missing 'ver' property." >&2
+        exit 1
+      fi
+      name=$(echo $refProfileResponse | jq -e -r .name)
+      if [ ! "$?" -eq 0 ]; then
+        echo "Referenced profile does not exist. Server response is missing 'name' property." >&2
+        exit 1
+      fi
+      if [ ! "$ver" = "0.3" ]; then
+        echo "Unsupported profile version of referenced profile." >&2
+        exit 1
+      fi
+      # add place object to post
+      publicKey=$(echo $refProfileResponse | jq -e -r .publicKey)
+      if [ "$?" -eq 0 ]; then
+        #postData=$(echo $postData | jq --compact-output --arg uri "$propvalue" --argjson publicKey "$publicKey" '. + {"place": {"uri": $uri, "publicKey": $publicKey}}')
+        jq --arg propvalue "$propvalue" --argjson publicKey "$publicKey" ". + {\"$propname\": {\"uri\": \$propvalue, \"publicKey\": \$publicKey}}" ~/.spxp/default/profile.json > ~/.spxp/$identity/profile-temp.json
+      else
+        #postData=$(echo $postData | jq --compact-output --arg uri "$place" '. + {"place": {"uri": $uri}}')
+        jq --arg propvalue "$propvalue" ". + {\"$propname\": {\"uri\": \$propvalue}" ~/.spxp/default/profile.json > ~/.spxp/$identity/profile-temp.json
+      fi
+    else
+      jq --arg propvalue "$propvalue" ". + {\"$propname\": \$propvalue}" ~/.spxp/default/profile.json > ~/.spxp/$identity/profile-temp.json
+    fi
+  fi
+  if [ ! "$?" -eq 0 ]; then
+    echo "Updating profile file failed." >&2
+    rm -f ~/.spxp/$identity/profile-temp.json
+    exit 1
+  fi
+  rm ~/.spxp/$identity/profile.json
+  mv ~/.spxp/$identity/profile-temp.json ~/.spxp/$identity/profile.json
+  sign_profile
+  # publish only if bound
+  if [ ! -f ~/.spxp/$identity/binding.json ]; then
+    echo "Successfully updated profile, but not published. Identity is not bound." >&2
+    return
+  fi
+  publish_profile
+  # Report succeess
+  echo "Successfully updated and published identity '$identity'"
+}
+
+post() {
+  identity="default"
+  message=""
+  link=""
+  preview=""
+  full=""
+  place=""
+  createts=""
+  positional=()
+  while (( "$#" )); do
+    case "$1" in
+      -i|--identity)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          identity=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -m|--message)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          message=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -M|--msgfile)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          message=`cat $2`
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -l|--link)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          link=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -p|--preview)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          preview=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -f|--full)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          full=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -c|--createts)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          createts=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -a|--place)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          place=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -*|--*=) # unsupported flags
+        echo "Error: Unsupported flag $1" >&2
+        exit 1
+        ;;
+      *) # preserve positional arguments
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+  # publish only if bound
+  if [ ! -f ~/.spxp/$identity/binding.json ]; then
+    echo "Identity is not bound. Cannot publish post"
+    return
+  fi
+  # check we have a type and prepare post accordingly
+  type=${positional[0]}
+  if [ -z "$type" ]; then
+    echo "Missing post type. Use 'spxp help post' for more details." >&2
+    exit 1
+  fi
+  if [ "$type" = "text" ] ; then
+    if [ -z "$message" ]; then
+      echo "Missing message for text post. Use 'spxp help post' for more details." >&2
+      exit 1
+    fi
+    postData=$(jq --null-input --compact-output --arg message "$message" '{"type": "text", "message": $message}')
+  elif [ "$type" = "web" ] ; then
+    if [ -z "$link" ]; then
+      echo "Missing link for web post. Use 'spxp help post' for more details." >&2
+      exit 1
+    fi
+    if [ ! -z "$place" ]; then
+      echo "Place is not supported for web posts. Use 'spxp help post' for more details." >&2
+      exit 1
+    fi
+    postData=$(jq --null-input --compact-output --arg link "$link" '{"type": "web", "link": $link}')
+    if [ ! -z "$message" ]; then
+      postData=$(echo $postData | jq --compact-output --arg message "$message" '. + {"message": $message}')
+    fi
+  elif [ "$type" = "photo" ]; then
+    if [ ! -f "$preview" ]; then
+      echo "Missing preview file for photo post. Use 'spxp help post' for more details." >&2
+      exit 1
+    fi
+    postData=$(jq --null-input --compact-output '{"type": "photo"}')
+    if [ ! -z "$message" ]; then
+      postData=$(echo $postData | jq --compact-output --arg message "$message" '. + {"message": $message}')
+    fi
+  elif [ "$type" = "video" ]; then
+    if [ ! -f "$preview" ]; then
+      echo "Missing preview file for video post. Use 'spxp help post' for more details." >&2
+      exit 1
+    fi
+    if [ ! -f "$full" ]; then
+      echo "Missing full media file for video post. Use 'spxp help post' for more details." >&2
+      exit 1
+    fi
+    postData=$(jq --null-input --compact-output '{"type": "video"}')
+    if [ ! -z "$message" ]; then
+      postData=$(echo $postData | jq --compact-output --arg message "$message" '. + {"message": $message}')
+    fi
+  else
+    echo "Unknown post type '$type'. Use 'spxp help post' for more details." >&2
+    exit 1
+  fi
+  if [ ! -z "$createts" ]; then
+    postData=$(echo $postData | jq --compact-output --arg createts "$createts" '. + {"createts": $createts}')
+  fi
+  if [ ! -z "$place" ]; then
+    placeProfileResponse=$(curl -f -s -H "Accept: application/json" "$place")
+    if [ ! "$?" -eq 0 ]; then
+      echo "Place profile does not exist. Server response: $placeProfileResponse" >&2
+      exit 1
+    fi
+    echo $placeProfileResponse | jq > /dev/null
+    if [ ! "$?" -eq 0 ]; then
+      echo "Place profile does not exist. Server response is not a valid JSON document." >&2
+      exit 1
+    fi
+    ver=$(echo $placeProfileResponse | jq -e -r .ver)
+    if [ ! "$?" -eq 0 ]; then
+      echo "Place profile does not exist. Server response is missing 'ver' property." >&2
+      exit 1
+    fi
+    name=$(echo $placeProfileResponse | jq -e -r .name)
+    if [ ! "$?" -eq 0 ]; then
+      echo "Place profile does not exist. Server response is missing 'name' property." >&2
+      exit 1
+    fi
+    if [ ! "$ver" = "0.3" ]; then
+      echo "Unsupported profile version of place profile." >&2
+      exit 1
+    fi
+    # add place object to post
+    publicKey=$(echo $placeProfileResponse | jq -e -r .publicKey)
+    if [ "$?" -eq 0 ]; then
+      postData=$(echo $postData | jq --compact-output --arg uri "$place" --argjson publicKey "$publicKey" '. + {"place": {"uri": $uri, "publicKey": $publicKey}}')
+    else 
+      postData=$(echo $postData | jq --compact-output --arg uri "$place" '. + {"place": {"uri": $uri}}')
+    fi
+  fi
+  # Get access token
+  get_access_token
+  # Publish
+  managementEndpoint=$(jq -r .managementEndpoint ~/.spxp/$identity/binding.json)
+  if [[ "$type" =~ ^(photo|video)$ ]]; then
+    publishMediaUri="$managementEndpoint/media"
+    publishMediaResponse=$(curl -s -H "Accept: application/json" -H "Authorization: Bearer $accessToken" -F source=@$preview "$publishMediaUri")
+    if [ ! "$?" -eq 0 ]; then
+      echo "Cannot publish post. Publishing preview failed: $publishMediaResponse" >&2
+      exit 1
+    fi
+    uri=$(echo $publishMediaResponse | jq -r .uri)
+    if [ "$type" = "photo" ]; then
+      postData=$(echo $postData | jq --compact-output --arg small "$uri" '. + {"small": $small}')
+    else
+      postData=$(echo $postData | jq --compact-output --arg preview "$uri" '. + {"preview": $preview}')
+    fi
+    if [ ! -z "$full" ]; then
+      publishMediaResponse=$(curl -s -H "Accept: application/json" -H "Authorization: Bearer $accessToken" -F source=@$full "$publishMediaUri")
+      if [ ! "$?" -eq 0 ]; then
+        echo "Cannot publish post. Publishing full media failed: $publishMediaResponse" >&2
+        exit 1
+      fi
+      uri=$(echo $publishMediaResponse | jq -r .uri)
+      if [ "$type" = "photo" ]; then
+        postData=$(echo $postData | jq --compact-output --arg full "$uri" '. + {"full": $full}')
+      else
+        postData=$(echo $postData | jq --compact-output --arg media "$uri" '. + {"media": $media}')
+      fi
+    fi
+  fi
+  publishPostUri="$managementEndpoint/posts"
+  publishPostResponse=$(echo $postData | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json | curl -f -s -H "Accept: application/json" -H "Content-Type:application/json" -H "Authorization: Bearer $accessToken" -d @- "$publishPostUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot publish post. Server response: $publishRootResponse" >&2
+    exit 1
+  fi
+  # Report succeess
+  echo "Successfully published post for identity '$identity'"
+}
+
+friends() {
+  identity="default"
+  local positional=()
+  while (( "$#" )); do
+    case "$1" in
+      -i|--identity)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          identity=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -*|--*=) # unsupported flags
+        echo "Error: Unsupported flag $1" >&2
+        exit 1
+        ;;
+      *) # preserve positional arguments
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+  local subcommand=${positional[0]}
+  local profileUri=${positional[1]}
+  # check command and parameters
+  if [ -z "$subcommand" ]; then
+    echo "Missing command. Use 'spxp help friends' for more details." >&2
+    exit 1
+  fi
+  if [ -z "$profileUri" ]; then
+    echo "Missing profileuri. Use 'spxp help friends' for more details." >&2
+    exit 1
+  fi
+  if [ "$subcommand" = "add" ] ; then
+    friends_add $profileUri
+  elif [ "$subcommand" = "remove" ] ; then
+    friends_remove $profileUri
+  else
+    echo "Invalid command '$subcommand'. Use 'spxp help friends' for more details." >&2
+    exit 1
+  fi
+}
+
+friends_add() {
+  profileUri=$1
+  # try to get profile
+  profileResponse=$(curl -f -s -H "Accept: application/json" "$profileUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not exist. Server response: $profileResponse" >&2
+    exit 1
+  fi
+  echo $profileResponse | jq > /dev/null
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not exist. Server response is not a valid JSON document." >&2
+    exit 1
+  fi
+  ver=$(echo $profileResponse | jq -e -r .ver)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not exist. Server response is missing 'ver' property." >&2
+    exit 1
+  fi
+  name=$(echo $profileResponse | jq -e -r .name)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not exist. Server response is missing 'name' property." >&2
+    exit 1
+  fi
+  if [ ! "$ver" = "0.3" ]; then
+    echo "Unsupported profile version." >&2
+    exit 1
+  fi
+  # build new friend object
+  friendData=$(jq --null-input --compact-output --arg uri "$profileUri" '{"uri": $uri}')
+  publicKey=$(echo $profileResponse | jq -e -r .publicKey)
+  if [ "$?" -eq 0 ]; then
+    friendData=$(echo $friendData | jq --compact-output --argjson publicKey "$publicKey" '. + {"publicKey": $publicKey}')
+  fi
+  # update friends
+  rm -f ~/.spxp/$identity/friends-temp.json
+  jq --arg removeUri $profileUri 'del(.data[] | select(.uri == $removeUri))' ~/.spxp/$identity/friends.json > ~/.spxp/$identity/friends-temp.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Updating friends file failed." >&2
+    rm -f ~/.spxp/$identity/friends-temp.json
+    exit 1
+  fi
+  rm ~/.spxp/$identity/friends.json
+  mv ~/.spxp/$identity/friends-temp.json ~/.spxp/$identity/friends.json
+  rm -f ~/.spxp/$identity/friends-temp.json
+  jq --argjson newFriend $friendData '.data += [$newFriend]' ~/.spxp/$identity/friends.json > ~/.spxp/$identity/friends-temp.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Updating friends file failed." >&2
+    rm -f ~/.spxp/$identity/friends-temp.json
+    exit 1
+  fi
+  rm ~/.spxp/$identity/friends.json
+  mv ~/.spxp/$identity/friends-temp.json ~/.spxp/$identity/friends.json
+  sign_friends
+  # publish only if bound
+  if [ ! -f ~/.spxp/$identity/binding.json ]; then
+    echo "Successfully updated friends, but not published. Identity is not bound." >&2
+    return
+  fi
+  publish_friends
+  # Report succeess
+  echo "Successfully updated and published friends of identity '$identity'"
+}
+
+friends_remove() {
+  local profileUri=$1
+  # update friends
+  rm -f ~/.spxp/$identity/friends-temp.json
+  jq --arg removeUri $profileUri 'del(.data[] | select(.uri == $removeUri))' ~/.spxp/$identity/friends.json > ~/.spxp/$identity/friends-temp.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Updating friends file failed." >&2
+    rm -f ~/.spxp/$identity/friends-temp.json
+    exit 1
+  fi
+  rm ~/.spxp/$identity/friends.json
+  mv ~/.spxp/$identity/friends-temp.json ~/.spxp/$identity/friends.json
+  sign_friends
+  # publish only if bound
+  if [ ! -f ~/.spxp/$identity/binding.json ]; then
+    echo "Successfully updated friends, but not published. Identity is not bound." >&2
+    return
+  fi
+  publish_friends
+  # Report succeess
+  echo "Successfully updated and published friends of identity '$identity'"
+}
+
+if [ "$1" = "help" ] ; then
+  shift
+  help "$@"
+elif [ "$1" = "init" ] ; then
+  shift
+  init "$@"
+elif [ "$1" = "discover" ]; then
+  shift
+  discover "$@"
+elif [ "$1" = "bind" ]; then
+  shift
+  bind "$@"
+elif [ "$1" = "profile" ]; then
+  shift
+  profile "$@"
+elif [ "$1" = "post" ]; then
+  shift
+  post "$@"
+elif [ "$1" = "friends" ]; then
+  shift
+  friends "$@"
+else
+  usage
+  exit 1
+fi
