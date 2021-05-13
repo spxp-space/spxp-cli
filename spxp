@@ -525,7 +525,7 @@ profile() {
         exit 1
       fi
       propvalue=$(echo $publishMediaResponse | jq -r .uri)
-      jq --arg propvalue "$propvalue" ". + {\"$propname\": \$propvalue}" ~/.spxp/default/profile.json > ~/.spxp/$identity/profile-temp.json
+      jq --arg propvalue "$propvalue" ". + {\"$propname\": \$propvalue}" ~/.spxp/$identity/profile.json > ~/.spxp/$identity/profile-temp.json
     elif [[ "$propname" =~ ^(hometown|location)$ ]]; then
       refProfileResponse=$(curl -f -s -H "Accept: application/json" "$propvalue")
       if [ ! "$?" -eq 0 ]; then
@@ -551,17 +551,15 @@ profile() {
         echo "Unsupported profile version of referenced profile." >&2
         exit 1
       fi
-      # add place object to post
+      # set profile reference
       publicKey=$(echo $refProfileResponse | jq -e -r .publicKey)
       if [ "$?" -eq 0 ]; then
-        #postData=$(echo $postData | jq --compact-output --arg uri "$propvalue" --argjson publicKey "$publicKey" '. + {"place": {"uri": $uri, "publicKey": $publicKey}}')
-        jq --arg propvalue "$propvalue" --argjson publicKey "$publicKey" ". + {\"$propname\": {\"uri\": \$propvalue, \"publicKey\": \$publicKey}}" ~/.spxp/default/profile.json > ~/.spxp/$identity/profile-temp.json
+        jq --arg propvalue "$propvalue" --argjson publicKey "$publicKey" ". + {\"$propname\": {\"uri\": \$propvalue, \"publicKey\": \$publicKey}}" ~/.spxp/$identity/profile.json > ~/.spxp/$identity/profile-temp.json
       else
-        #postData=$(echo $postData | jq --compact-output --arg uri "$place" '. + {"place": {"uri": $uri}}')
-        jq --arg propvalue "$propvalue" ". + {\"$propname\": {\"uri\": \$propvalue}" ~/.spxp/default/profile.json > ~/.spxp/$identity/profile-temp.json
+        jq --arg propvalue "$propvalue" ". + {\"$propname\": {\"uri\": \$propvalue}" ~/.spxp/$identity/profile.json > ~/.spxp/$identity/profile-temp.json
       fi
     else
-      jq --arg propvalue "$propvalue" ". + {\"$propname\": \$propvalue}" ~/.spxp/default/profile.json > ~/.spxp/$identity/profile-temp.json
+      jq --arg propvalue "$propvalue" ". + {\"$propname\": \$propvalue}" ~/.spxp/$identity/profile.json > ~/.spxp/$identity/profile-temp.json
     fi
   fi
   if [ ! "$?" -eq 0 ]; then
