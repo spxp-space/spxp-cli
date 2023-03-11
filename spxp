@@ -56,8 +56,10 @@ usage_init() {
 }
 
 usage_discover() {
-  echo "Usage: spxp discover <domain>"
+  echo "Usage: spxp discover <domain> [options...]"
   echo "Discover service URIs of domain supporting the SPXP service provider extension"
+  echo "options:"
+  echo "  --notls         Use http instead of https."
   echo "parameters:"
   echo "  <domain>  Domain name of SPXP service provider to discover."
 }
@@ -67,6 +69,7 @@ usage_bind() {
   echo "Discover service URIs of domain supporting the SPXP service provider extension"
   echo "options:"
   echo "  -i --identity   Internal identifier of the new identity. Not public visible. 'default' by default."
+  echo "  --notls         Use http instead of https."
   echo "parameters:"
   echo "  <domain>  Domain name of SPXP service provider to bind new identity to"
   echo "  <token>   Token provided by SPXP service provider"
@@ -203,13 +206,31 @@ init() {
 }
 
 discover() {
-  domain=$1
+  protocol="https"
+  positional=()
+  while (( "$#" )); do
+    case "$1" in
+      --notls)
+        protocol="http"
+        shift
+        ;;
+      -*|--*=) # unsupported flags
+        echo "Error: Unsupported flag $1" >&2
+        exit 1
+        ;;
+      *) # preserve positional arguments
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+  domain=${positional[0]}
   # check we have a domain
   if [ -z "$domain" ]; then
     echo "Missing domain of service provider. Use 'spxp help discover' for more details." >&2
     exit 1
   fi
-  speDiscoveryUri="https://$domain/.well-known/spxp/spe-discovery"
+  speDiscoveryUri="$protocol://$domain/.well-known/spxp/spe-discovery"
   speDiscoveryResponse=$(curl -f -s -H "Accept: application/json" "$speDiscoveryUri")
   if [ ! "$?" -eq 0 ]; then
     echo "Discovery failed. $domain does not provide the SPXP-SPE extension." >&2
@@ -305,6 +326,7 @@ publish() {
 
 bind() {
   identity="default"
+  protocol="https"
   positional=()
   while (( "$#" )); do
     case "$1" in
@@ -316,6 +338,10 @@ bind() {
           echo "Error: Argument for $1 is missing" >&2
           exit 1
         fi
+        ;;
+      --notls)
+        protocol="http"
+        shift
         ;;
       -*|--*=) # unsupported flags
         echo "Error: Unsupported flag $1" >&2
@@ -344,7 +370,7 @@ bind() {
     exit 1
   fi
   # SPE Discovery
-  speDiscoveryUri="https://$domain/.well-known/spxp/spe-discovery"
+  speDiscoveryUri="$protocol://$domain/.well-known/spxp/spe-discovery"
   speDiscoveryResponse=$(curl -f -s -H "Accept: application/json" "$speDiscoveryUri")
   if [ ! "$?" -eq 0 ]; then
     echo "Discovery failed. $domain does not provide the SPXP-SPE extension" >&2
