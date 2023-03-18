@@ -27,6 +27,8 @@ usage() {
   echo "  profile   Set profile properties"
   echo "  post      Publish a new post"
   echo "  friends   Maintain list of friends"
+  echo "  groups    Manage publishing groups"
+  echo "  connect   Establish and manage connections"
   echo "For usage examples see 'spxp help'"
 }
 
@@ -93,14 +95,16 @@ usage_post() {
   echo "parameter:"
   echo "  <type>  One of \"text\", \"web\", \"photo\" or \"video\""
   echo "options:"
-  echo "  -i --identity  Internal identifier of the new identity. Not public visible. 'default' by default."
-  echo "  -m --message   Message to appear in this post. Required for type \"text\""
-  echo "  -M --msgfile   Read content of message from file"
-  echo "  -l --link      Link to appear in this post. Required for type \"web\""
-  echo "  -p --preview   File name containing preview picture of \"photo\" or \"video\" post"
-  echo "  -f --full      File name containing full media of \"photo\" or \"video\" post"
-  echo "  -a --place     Profile URI of a place"
-  echo "  -c --createts  Optional create timestamp in spxp format"
+  echo "  -i --identity   Internal identifier of the new identity. Not public visible. 'default' by default."
+  echo "  -m --message    Message to appear in this post. Required for type \"text\""
+  echo "  -M --msgfile    Read content of message from file"
+  echo "  -l --link       Link to appear in this post. Required for type \"web\""
+  echo "  -p --preview    File name containing preview picture of \"photo\" or \"video\" post"
+  echo "  -f --full       File name containing full media of \"photo\" or \"video\" post"
+  echo "  -a --place      Profile URI of a place"
+  echo "  -c --createts   Optional create timestamp in spxp format"
+  echo "  -g --group      Encrypt post for publishing group"
+  echo "  -o --contribute Allow comments and reactions in publishing group"
 }
 
 usage_friends() {
@@ -109,6 +113,25 @@ usage_friends() {
   echo "commands:"
   echo "  add     Add given profileuri to list of friends"
   echo "  remove  Remove given profileuri from list of friends"
+  echo "options:"
+  echo "  -i --identity  Internal identifier of the new identity. Not public visible. 'default' by default."
+}
+
+usage_groups() {
+  echo "Usage: spxp groups <command> <groupname> [options...]"
+  echo "Manage publishing groups"
+  echo "commands:"
+  echo "  create  Create a new publishing group"
+  echo "options:"
+  echo "  -i --identity  Internal identifier of the new identity. Not public visible. 'default' by default."
+}
+
+usage_connect() {
+  echo "Usage: spxp connect <command> [parameters...] [options...]"
+  echo "Establish and manage connections"
+  echo "commands:"
+  echo "  request Send a connection request"
+  echo "          Parameters: <peerProfileUri> <group>"
   echo "options:"
   echo "  -i --identity  Internal identifier of the new identity. Not public visible. 'default' by default."
 }
@@ -128,6 +151,10 @@ elif [ "$1" = "post" ]; then
   usage_post
 elif [ "$1" = "friends" ]; then
   usage_friends
+elif [ "$1" = "groups" ]; then
+  usage_groups
+elif [ "$1" = "connect" ]; then
+  usage_connect
 else
   usage_help
   exit 1
@@ -426,27 +453,32 @@ bind() {
   fi
   friendsEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.friendsEndpoint)
   if [ ! "$?" -eq 0 ]; then
-    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    echo "Missing friendsEndpoint in service info." >&2
     exit 1
   fi
   postsEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.postsEndpoint)
   if [ ! "$?" -eq 0 ]; then
-    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    echo "Missing postsEndpoint in service info." >&2
     exit 1
   fi
   keysEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.keysEndpoint)
   if [ ! "$?" -eq 0 ]; then
-    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    echo "Missing keysEndpoint in service info." >&2
     exit 1
   fi
   connectEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.connectEndpoint)
   if [ ! "$?" -eq 0 ]; then
-    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    echo "Missing connectEndpoint in service info." >&2
     exit 1
   fi
   connectResponseEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.connectResponseEndpoint)
   if [ ! "$?" -eq 0 ]; then
-    echo "Cannot get service info. Server response: $serviceInfoResponse" >&2
+    echo "Missing connectResponseEndpoint in service info." >&2
+    exit 1
+  fi
+  publishEndpoint=$(echo $serviceInfoResponse | jq -r .endpoints.publishEndpoint)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Missing publishEndpoint in service info." >&2
     exit 1
   fi
   # Update binding file with service endpoints
@@ -454,9 +486,10 @@ bind() {
   jq --arg friendsEndpoint "$friendsEndpoint" \
      --arg postsEndpoint "$postsEndpoint" \
      --arg keysEndpoint "$keysEndpoint" \
+     --arg publishEndpoint "$publishEndpoint" \
      --arg connectEndpoint "$connectEndpoint" \
      --arg connectResponseEndpoint "$connectResponseEndpoint" \
-     '. + {"friendsEndpoint": $friendsEndpoint, "postsEndpoint": $postsEndpoint, "keysEndpoint": $keysEndpoint, "connectEndpoint": $connectEndpoint, "connectResponseEndpoint": $connectResponseEndpoint}' \
+     '. + {"friendsEndpoint": $friendsEndpoint, "postsEndpoint": $postsEndpoint, "keysEndpoint": $keysEndpoint, "publishEndpoint": $publishEndpoint, "connectEndpoint": $connectEndpoint, "connectResponseEndpoint": $connectResponseEndpoint}' \
      ~/.spxp/$identity/binding.json > ~/.spxp/$identity/binding-temp.json
   if [ ! "$?" -eq 0 ]; then
     echo "Updating binding file failed." >&2
@@ -470,7 +503,8 @@ bind() {
   jq --arg friendsEndpoint "$friendsEndpoint" \
      --arg postsEndpoint "$postsEndpoint" \
      --arg keysEndpoint "$keysEndpoint" \
-     '. + {"friendsEndpoint": $friendsEndpoint, "postsEndpoint": $postsEndpoint, "keysEndpoint": $keysEndpoint}' \
+     --arg publishEndpoint "$publishEndpoint" \
+     '. + {"friendsEndpoint": $friendsEndpoint, "postsEndpoint": $postsEndpoint, "keysEndpoint": $keysEndpoint, "publishEndpoint": $publishEndpoint' \
      ~/.spxp/$identity/profile.json > ~/.spxp/$identity/profile-temp.json
   if [ ! "$?" -eq 0 ]; then
     echo "Updating profile file failed." >&2
@@ -614,6 +648,8 @@ post() {
   full=""
   place=""
   createts=""
+  group=""
+  contributeAs=""
   positional=()
   while (( "$#" )); do
     case "$1" in
@@ -683,6 +719,24 @@ post() {
       -a|--place)
         if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
           place=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -g|--group)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          group=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -o|--contribute)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          contributeAs=$2
           shift 2
         else
           echo "Error: Argument for $1 is missing" >&2
@@ -791,6 +845,21 @@ post() {
       postData=$(echo $postData | jq --compact-output --arg uri "$place" '. + {"place": {"uri": $uri}}')
     fi
   fi
+  # contributions
+  if [ ! -z "$contributeAs" ]; then
+    postData=$(echo $postData | jq --compact-output --arg contributeAs "$contributeAs" '. + {"contribute": {"comment": true, "react": true, "group": $contributeAs}}')
+  fi
+  # sign post
+  postData=$(echo $postData | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json)
+  # encrypt post
+  if [ ! -z "$group" ]; then
+    postData=$(echo $postData | SpxpCryptoTool encryptsymjson /dev/stdin ~/.spxp/$identity/round-key-$group-1.json)
+    if [ ! "$?" -eq 0 ]; then
+      echo "Failed encrypting post. Does the group '$group' exist?" >&2
+      exit 1
+    fi
+    postData=$(jq --null-input --compact-output --argjson postData "$postData" '{"private": [$postData]}')
+  fi
   # Get access token
   get_access_token
   # Publish
@@ -823,7 +892,7 @@ post() {
     fi
   fi
   publishPostUri="$managementEndpoint/posts"
-  publishPostResponse=$(echo $postData | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json | curl -f -s -H "Accept: application/json" -H "Content-Type:application/json" -H "Authorization: Bearer $accessToken" -d @- "$publishPostUri")
+  publishPostResponse=$(echo $postData | curl -f -s -H "Accept: application/json" -H "Content-Type:application/json" -H "Authorization: Bearer $accessToken" -d @- "$publishPostUri")
   if [ ! "$?" -eq 0 ]; then
     echo "Cannot publish post. Server response: $publishRootResponse" >&2
     exit 1
@@ -834,7 +903,7 @@ post() {
 
 friends() {
   identity="default"
-  local positional=()
+  positional=()
   while (( "$#" )); do
     case "$1" in
       -i|--identity)
@@ -963,6 +1032,231 @@ friends_remove() {
   echo "Successfully updated and published friends of identity '$identity'"
 }
 
+groups() {
+  identity="default"
+  positional=()
+  while (( "$#" )); do
+    case "$1" in
+      -i|--identity)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          identity=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -*|--*=) # unsupported flags
+        echo "Error: Unsupported flag $1" >&2
+        exit 1
+        ;;
+      *) # preserve positional arguments
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+  local subcommand=${positional[0]}
+  # check command and parameters
+  if [ -z "$subcommand" ]; then
+    echo "Missing command. Use 'spxp help groups' for more details." >&2
+    exit 1
+  fi
+  if [ "$subcommand" = "create" ] ; then
+    groups_create
+  else
+    echo "Invalid command '$subcommand'. Use 'spxp help groups' for more details." >&2
+    exit 1
+  fi
+}
+
+groups_create() {
+  local groupName=${positional[1]}
+  echo "Creating group $groupName"
+  if [ -z "$groupName" ]; then
+    echo "Missing group name. Use 'spxp help groups' for more details." >&2
+    exit 1
+  fi
+  # Check group does not yet exist
+  if [ -f ~/.spxp/$identity/round-key-${groupName}-1.json ]; then
+    echo "Error: Group $groupName already exists." >&2
+    exit 1
+  fi
+  # Create first round key
+  SpxpCryptoTool gensymkey | jq --arg kid "$groupName.1" '.kid = $kid' > ~/.spxp/$identity/round-key-$groupName-1.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Creating new round key failed. (SpxpCryptoTool failed)" >&2
+    exit 1
+  fi
+  if [ ! -f ~/.spxp/$identity/round-key-$groupName-1.json ]; then
+    echo "Creating new round key failed. (group key does not exist)" >&2
+    exit 1
+  fi
+  # Report succeess
+  echo "Successfully created first round key of group '$groupName'"
+}
+
+connect() {
+  identity="default"
+  positional=()
+  while (( "$#" )); do
+    case "$1" in
+      -i|--identity)
+        if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
+          identity=$2
+          shift 2
+        else
+          echo "Error: Argument for $1 is missing" >&2
+          exit 1
+        fi
+        ;;
+      -*|--*=) # unsupported flags
+        echo "Error: Unsupported flag $1" >&2
+        exit 1
+        ;;
+      *) # preserve positional arguments
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+  local subcommand=${positional[0]}
+  # check command and parameters
+  if [ -z "$subcommand" ]; then
+    echo "Missing command. Use 'spxp help connect' for more details." >&2
+    exit 1
+  fi
+  if [ "$subcommand" = "request" ] ; then
+    connect_request
+  else
+    echo "Invalid command '$subcommand'. Use 'spxp help connect' for more details." >&2
+    exit 1
+  fi
+}
+
+connect_request() {
+  local profileUri=${positional[1]}
+  local groupName=${positional[2]}
+  # check group name
+  if [ ! -f ~/.spxp/$identity/round-key-$groupName-1.json ]; then
+    echo "Group key does not exist" >&2
+    exit 1
+  fi
+  # try to get peer profile
+  profileResponse=$(curl -f -s -H "Accept: application/json" "$profileUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not exist. Server response: $profileResponse" >&2
+    exit 1
+  fi
+  echo $profileResponse | jq > /dev/null
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not exist. Server response is not a valid JSON document." >&2
+    exit 1
+  fi
+  ver=$(echo $profileResponse | jq -e -r .ver)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not exist. Server response is missing 'ver' property." >&2
+    exit 1
+  fi
+  name=$(echo $profileResponse | jq -e -r .name)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not exist. Server response is missing 'name' property." >&2
+    exit 1
+  fi
+  if [ ! "$ver" = "0.3" ]; then
+    echo "Unsupported profile version." >&2
+    exit 1
+  fi
+  publicKey=$(echo $profileResponse | jq -e -r .publicKey)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not have a publicKey." >&2
+    exit 1
+  fi
+  publicKeyId=$(echo $publicKey | jq -e -r .kid)
+  if [ ! "$?" -eq 0 ]; then
+    echo "PublicKey of profile does not have a kid." >&2
+    exit 1
+  fi
+  if ! [[ "$publicKeyId" =~ ^[A-Za-z0-9_\-]+$ ]]; then
+    echo "kid of profiles publicKey contains invalid characters" >&2
+    exit 1
+  fi
+  # extract connection key and connect endpoint
+  echo $profileResponse | jq -e -r .connect.key > ~/.spxp/$identity/connection-key-$publicKeyId.json
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not have a connection key." >&2
+    exit 1
+  fi
+  local connectEndpoint=$(echo $profileResponse | jq -e -r .connect.endpoint)
+  if [ ! "$?" -eq 0 ]; then
+    echo "Profile does not have a connection endpoint." >&2
+    exit 1
+  fi
+  if [[ $connectEndpoint == *"://"* ]]; then
+    local connectUri=$connectEndpoint
+  else
+    if [[ $connectEndpoint == "/"* ]]; then
+      echo "Don't know how to handle a server relative connect endpoint." >&2
+      exit 1
+    else
+      if [[ $profileUri == *"/" ]]; then
+        local connectUri=$profileUri$connectEndpoint
+      else
+        local connectUri=$profileUri/../$connectEndpoint
+      fi
+    fi
+  fi
+  # create new establishId, establishKey, readerKey, authorized signing key 
+  establishId=$(SpxpCryptoTool gensymkey | jq -e -r .kid)
+  echo $establishId > ~/.spxp/$identity/establish-id-$publicKeyId.txt
+  echo $publicKeyId > ~/.spxp/$identity/connection-peer-$establishId.txt
+  SpxpCryptoTool gensymkey > ~/.spxp/$identity/establish-key-$publicKeyId.json
+  SpxpCryptoTool gensymkey > ~/.spxp/$identity/issued-reader-key-$publicKeyId.json
+  SpxpCryptoTool genprofilekeypair > ~/.spxp/$identity/issued-publish-key-$publicKeyId.json
+  jq --null-input --argjson publicKey "$publicKey" '{"publicKey": $publicKey, "grant": ["post", "comment", "react"]}' | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json > ~/.spxp/$identity/issued-certificate-$publicKeyId.json
+  local readerKeyId=$(jq -r .kid ~/.spxp/$identity/issued-reader-key-$publicKeyId.json)
+  local publishKeyId=$(jq -r .kid ~/.spxp/$identity/issued-publish-key-$publicKeyId.json)
+  # create connection package
+  connectionPackage=$(jq --null-input --arg establishIdStr "$establishId" --arg groupName "$groupName" --slurpfile readerKey ~/.spxp/$identity/issued-reader-key-$publicKeyId.json --slurpfile publishKey ~/.spxp/$identity/issued-publish-key-$publicKeyId.json --slurpfile certificate ~/.spxp/$identity/issued-certificate-$publicKeyId.json '{"type": "connection_package", "ver": "0.3", "establishId": $establishIdStr, "readerKey": $readerKey[0], "publishing": {"postPublic": false, "postPrivate": {"publishKey": $publishKey[0], "groups": {"Friends": $groupName}}, "certificate": $certificate[0]} }')
+  connectionPackage=$(echo $connectionPackage | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json)
+  connectionPackage=$(echo $connectionPackage | SpxpCryptoTool encryptsymjson /dev/stdin ~/.spxp/$identity/establish-key-$publicKeyId.json)
+  # create connection request message
+  local myProfileUri=$(jq -r .profileUri ~/.spxp/$identity/binding.json)
+  local responseEndpoint=$(jq -r .connectResponseEndpoint ~/.spxp/$identity/binding.json)
+  local timestamp=$(date -u +%Y-%m-%dT%T.000)
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    local expires=$(date -v +180d -u +%Y-%m-%dT%T.000)
+  else
+    local expires=$(date -d "+180 days" -u +%Y-%m-%dT%T.000)
+  fi
+  connectionRequest=$(jq --null-input --arg establishIdStr "$establishId" --arg timestampStr "$timestamp" --arg expiresStr "$expires" --arg requesteeUri "$profileUri" --argjson requesteePublicKey "$publicKey" --arg myProfileUri "$myProfileUri" --slurpfile myPublicKey ~/.spxp/$identity/profile-public-key.json --arg responseEndpoint "$responseEndpoint" --slurpfile establishKey ~/.spxp/$identity/establish-key-$publicKeyId.json '{"type": "connection_request", "ver": "0.3", "establishId": $establishIdStr, "timestamp": $timestampStr, "expires": $expiresStr, "requester": {"uri": $myProfileUri, "publicKey": $myPublicKey[0]}, "requestee": {"uri": $requesteeUri, "publicKey": $requesteePublicKey}, "responseEndpoint": $responseEndpoint, "offering": ["read","post","comment","react"], "establishKey": $establishKey[0]}')
+  connectionRequest=$(echo $connectionRequest | SpxpCryptoTool sign /dev/stdin ~/.spxp/$identity/signing-keypair.json)
+  connectionRequest=$(echo $connectionRequest | SpxpCryptoTool encryptasymjson /dev/stdin ~/.spxp/$identity/connection-key-$publicKeyId.json)
+  # encrypt group key with reader key
+  encryptedGroupKey=$(SpxpCryptoTool encryptsymcompact ~/.spxp/$identity/round-key-$groupName-1.json ~/.spxp/$identity/issued-reader-key-$publicKeyId.json)
+  # Get access token
+  get_access_token
+  # prepare server
+  managementEndpoint=$(jq -r .managementEndpoint ~/.spxp/$identity/binding.json)
+  connectPrepareUri="$managementEndpoint/connect/packages"
+  local publishKeyAsString=$(cat  ~/.spxp/$identity/issued-publish-key-$publicKeyId.json | jq --compact-output)
+  prepMessage=$(jq --null-input --arg establishIdStr "$establishId" --arg expiresStr "$expires" --argjson package "$connectionPackage" --arg encryptedGroupKey "$encryptedGroupKey" --arg publishKeyAsString "$publishKeyAsString" "{\"establishId\": \$establishIdStr, \"expires\": \$expiresStr, \"package\": \$package, \"keys\": {\"$readerKeyId\": {\"$groupName\": {\"1\": \$encryptedGroupKey } }, \"@publish@\": {\"$publishKeyId\": {\"private\": \$publishKeyAsString } } } }")
+  prepareResponse=$(echo $prepMessage | curl -f -s -H "Accept: application/json" -H "Content-Type:application/json" -H "Authorization: Bearer $accessToken" -d @- "$connectPrepareUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot prepare connection. Server response: $prepareResponse" >&2
+    exit 1
+  fi
+  # send connection request
+  connectMessage=$(jq --null-input --argjson connectionRequest "$connectionRequest" '{"type": "connection_request", "ver": "0.3", "msg": $connectionRequest}')
+  connectRequestResponse=$(echo $connectMessage | curl -f -s -H "Accept: application/json" -H "Content-Type:application/json" -d @- "$connectUri")
+  if [ ! "$?" -eq 0 ]; then
+    echo "Cannot send connection request. Server response: $connectRequestResponse" >&2
+    exit 1
+  fi
+  # Report succeess
+  echo "Successfully prepared connection and sent connection request"
+}
+
 if [ "$1" = "help" ] ; then
   shift
   help "$@"
@@ -984,6 +1278,12 @@ elif [ "$1" = "post" ]; then
 elif [ "$1" = "friends" ]; then
   shift
   friends "$@"
+elif [ "$1" = "groups" ]; then
+  shift
+  groups "$@"
+elif [ "$1" = "connect" ]; then
+  shift
+  connect "$@"
 else
   usage
   exit 1

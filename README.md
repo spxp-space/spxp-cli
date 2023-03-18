@@ -117,3 +117,40 @@ $ spxp bind spxp.space nSMGCJeraEzOfa7p --identity jane
 $ spxp profile about "Social media geek." --identity jane
 $ spxp post text --message "Hello, world\!" --identity jane
 ```
+
+#### Private encrypted posts
+To create encrypted posts, you first need to create a new publishing group, for
+example for your friends:
+```
+$ spxp group create friends
+```
+The group id (e.g. `friends`) is used as part of the protocol and has to comply
+with certain limitations, like consisting purely of base64url safe characters.
+
+Once you have created at least one group, you can encrypt any post with the
+`--group` parameter:
+```
+$ spxp post text --message "Hello Friends" --group friends
+```
+
+If you want to allow recipients to respond to your post with a comment or a
+reaction, you need to specify the group name in which these reactions need
+to be published with the `--contribute` parameter:
+```
+$ spxp post text --message "Hello Friends" --group friends --contribute friends
+```
+
+#### Connection requests
+You can use this tool to send connection requests, but it does not (yet) handle
+the response coming back. It is still useful to test a client application, but
+with limited use in real life.  
+To request a connection, run the following command:
+```
+$ spxp connect request <profileUri> <group>
+```
+for example:
+```
+$ spxp connect request https://spxp.example.com/alice friends
+```
+This will send a connection request to the profileUri, giving this peer profile
+read and write access to your profile.
